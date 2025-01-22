@@ -18,6 +18,7 @@ from weatherAgent import WeatherAgent
 class HighPerformanceResponseModule:
     def __init__(self, personality, mood, openai_api_key, cache_size=1000):
         self.mood = mood
+        self.text_only_mode = False
         self.personality = personality
         self.client = AsyncOpenAI(api_key=openai_api_key)
         self.executor = ThreadPoolExecutor(max_workers=4)
@@ -106,13 +107,19 @@ class HighPerformanceResponseModule:
         temp_file.unlink()
 
     async def process_response(self, conversation, data):
-        """Process both text and speech generation with maximum concurrency"""
-        # Start response generation
+        """Process response with optional text-only mode"""
+        # Generate text response
         response_text = await self.generate_default_response(conversation, data)
 
-        # Generate and play speech
-        speech_task = asyncio.create_task(
-            self.generate_speech_response(response_text)
-        )
+        # Only generate speech if not in text-only mode
+        speech_task = None
+        if not self.text_only_mode:
+            speech_task = asyncio.create_task(
+                self.generate_speech_response(response_text)
+            )
 
         return response_text, speech_task
+
+    def set_text_only_mode(self, enabled=True):
+        """Enable or disable text-only mode"""
+        self.text_only_mode = enabled

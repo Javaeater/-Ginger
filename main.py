@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 from capture_audio import VoiceListeningAssistant
 from ProcessAgent import CommandProcessor, integrate_with_voice_assistant
 from hue_agent import HueAgent
+import aioconsole
 
 # Load environment variables
 load_dotenv()
@@ -98,11 +99,11 @@ async def main():
     )
 
     # Initialize HueAgent
-    processor.agent_instances["lights"] = HueAgent(
-        host=ha_host,
-        token=ha_token,
-        openai_api_key=openai_api_key
-    )
+    #processor.agent_instances["lights"] = HueAgent(
+        #host=ha_host,
+       # token=ha_token,
+      #  openai_api_key=openai_api_key
+  #  )
 
     # Create and configure voice assistant
     assistant = VoiceListeningAssistant(
@@ -115,10 +116,29 @@ async def main():
 
     # Start the system
     try:
-        print("\nStarting voice assistant system...")
-        await assistant.start_listening()
+        print("\nStarting assistant system...")
+        print("Type 'text mode' to enter text-only mode")
+
+        while True:
+            command = await aioconsole.ainput("> ")
+
+            if command.lower() == "text mode":
+                print("Switching to text mode...")
+                assistant.text_mode = True
+                processor.response_module.set_text_only_mode(True)
+                await assistant.start_text_mode()
+            elif command.lower() == "voice mode":
+                print("Switching to voice mode...")
+                assistant.text_mode = False
+                processor.response_module.set_text_only_mode(False)
+                await assistant.start_listening()
+            elif command.lower() == "exit":
+                break
+            else:
+                await assistant.start_listening()
+
     except KeyboardInterrupt:
-        print("\nShutting down voice assistant system...")
+        print("\nShutting down assistant system...")
     except Exception as e:
         print(f"\nError in main: {e}")
 
