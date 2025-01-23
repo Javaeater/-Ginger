@@ -10,26 +10,34 @@ import threading
 import time
 import aioconsole  # Add this import
 
+import speech_recognition as sr
+import asyncio
+from openai import OpenAI
+import wave
+import os
+import pvporcupine
+import pyaudio
+import struct
+import threading
+import time
+import aioconsole
+
 
 class VoiceListeningAssistant:
     def __init__(self, openai_api_key, porcupine_access_key):
         self.text_mode = False
+        self.text_to_speech_mode = False  # New mode for text-to-speech
+
         # Initialize Whisper components
         self.recognizer = sr.Recognizer()
-        # Lower energy threshold for better sensitivity
         self.recognizer.energy_threshold = 25
-        # Increase pause threshold to wait longer for complete phrases
         self.recognizer.pause_threshold = 1.5
-        # Keep dynamic energy adjustment for varying environments
         self.recognizer.dynamic_energy_threshold = True
-        # Reduce non-speaking duration for faster response
         self.recognizer.non_speaking_duration = 1.5
-        # Add dynamic energy adjustment rate
         self.recognizer.dynamic_energy_adjustment_ratio = 1.5
 
         self.client = OpenAI(api_key=openai_api_key)
 
-        # Initialize Porcupine with default keyword
         self.porcupine = pvporcupine.create(
             access_key=porcupine_access_key,
             keyword_paths=["Hey-Ginger_en_mac_v3_0_0.ppn"]
@@ -41,14 +49,13 @@ class VoiceListeningAssistant:
         self.stop_listening_event = asyncio.Event()
         self.command_timeout = 15
 
-        # New attributes for conversation mode
         self.conversation_mode = False
-        self.conversation_timeout = 30  # Timeout for conversation mode inactivity
+        self.conversation_timeout = 30
         self.last_interaction = time.time()
         self.conversation_timer = None
 
     async def start_text_mode(self):
-        """Start text mode listening"""
+        """Start text mode listening with optional text-to-speech"""
         print("Entering text mode. Type your commands (type 'exit' to quit)...")
         self.text_mode = True
         self.loop = asyncio.get_running_loop()
@@ -56,15 +63,21 @@ class VoiceListeningAssistant:
         try:
             while not self.stop_listening_event.is_set() and self.text_mode:
                 try:
-                    # Read input asynchronously
                     user_input = await aioconsole.ainput("> ")
 
                     if user_input.lower() == 'exit':
                         print("Exiting text mode...")
                         self.text_mode = False
                         break
+                    elif user_input.lower() == 'tts on':
+                        print("Enabling text-to-speech mode...")
+                        self.text_to_speech_mode = True
+                        continue
+                    elif user_input.lower() == 'tts off':
+                        print("Disabling text-to-speech mode...")
+                        self.text_to_speech_mode = False
+                        continue
 
-                    # Process the text command directly
                     if user_input:
                         result = await self.process_command(user_input)
                         print(f"\nResponse: {result}")
@@ -76,6 +89,21 @@ class VoiceListeningAssistant:
             print("\nStopping text mode...")
         finally:
             self.text_mode = False
+            self.text_to_speech_mode = False
+
+    async def process_command(self, command: str):
+        """Process command using the appropriate mode"""
+        if self.text_to_speech_mode:
+            # If in text-to-speech mode, use process_text_input instead
+            if hasattr(self, 'response_module'):
+                response_text, speech_task = await self.response_module.process_text_input(command)
+                if speech_task:
+                    await speech_task
+                return response_text
+            else:
+                return f"Processed with TTS: {command}"
+        else:
+            return f"Processed: {command}"
 
     def prepare_audio_file(self, audio_data):
         temp_wav = "temp_audio.wav"

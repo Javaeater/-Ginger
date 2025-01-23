@@ -5,7 +5,7 @@ from responseModule import HighPerformanceResponseModule
 import openai
 from dataclasses import dataclass
 import json
-import re
+
 
 @dataclass
 class AgentCommand:
@@ -13,8 +13,9 @@ class AgentCommand:
     function_name: str
     parameters: Dict[str, Any]
 
+
 class CommandProcessor:
-    def __init__(self, openai_api_key: str, agents: List[Tuple[str, str, List[str]]], 
+    def __init__(self, openai_api_key: str, agents: List[Tuple[str, str, List[str]]],
                  personality: str = "Friendly", mood: str = "Happy"):
         self.client = openai.OpenAI(api_key=openai_api_key)
         self.agents = agents
@@ -33,41 +34,8 @@ class CommandProcessor:
             if agent_name == "weather":
                 self.agent_instances[agent_name] = WeatherAgent()
 
-    def _extract_context_from_history(self, missing_param: str, current_command: Dict) -> str:
-        """
-        Extract context for a missing parameter from conversation history
-        """
-        # Create a prompt for GPT to find relevant context
-        history_text = "\n".join([f"{role}: {content}" for role, content in self.conversation_history[-5:]])
-        
-        prompt = f"""
-Given this conversation history:
-{history_text}
-
-Current command parameters: {json.dumps(current_command)}
-Find the most relevant value for the missing parameter: "{missing_param}"
-
-Return ONLY the value, no explanation. If no relevant value is found, return null.
-"""
-
-        try:
-            response = self.client.chat.completions.create(
-                model="gpt-4",
-                messages=[
-                    {"role": "system", "content": "You are a context analyzer that extracts relevant parameter values from conversation history."},
-                    {"role": "user", "content": prompt}
-                ]
-            )
-            
-            value = response.choices[0].message.content.strip()
-            return None if value.lower() == "null" else value
-            
-        except Exception as e:
-            print(f"Error extracting context: {e}")
-            return None
-
     def _create_agent_prompt(self, command: str) -> str:
-        """Create a detailed prompt for command parsing."""
+        """Create a detailed prompt for command parsing"""
         # Build agent descriptions with parameter details
         agent_descriptions = []
         for name, desc, commands in self.agents:
@@ -75,7 +43,7 @@ Return ONLY the value, no explanation. If no relevant value is found, return nul
                 command_details = []
                 for cmd in commands:
                     params = "\n          ".join(
-                        f"{param}: {desc}" 
+                        f"{param}: {desc}"
                         for param, desc in cmd["parameters"].items()
                     )
                     command_details.append(f"""
@@ -95,23 +63,29 @@ Return ONLY the value, no explanation. If no relevant value is found, return nul
 
         # Include recent conversation history for context
         history_context = "\n".join([
-            f"{role}: {content}" 
+            f"{role}: {content}"
             for role, content in self.conversation_history[-5:]
         ])
-        
-        return f"""Given these agents and their commands:
-    {' '.join(agent_descriptions)}
+
+        # Create the prompt
+        prompt = f"""Given these agents and their commands:
+{' '.join(agent_descriptions)}
 
 Recent conversation history:
 {history_context}
 
 Your task is to parse this command: "{command}"
 
-Even if the command contains references like "it", "that", or "what we discussed", try to determine the actual command based on the conversation history.
+If this is a general conversation or greeting (like "hello", "how are you", etc.), respond with:
+{{
+    "agent_name": "conversation",
+    "function_name": "chat",
+    "parameters": {{
+        "message": "<the user's message>"
+    }}
+}}
 
-For commands involving lights and moods, if a specific detail isn't given but was mentioned in the conversation history, use that information.
-
-You must identify one of the exact commands listed above and return a JSON object with this structure:
+For agent-specific commands, you must identify one of the exact commands listed above and return a JSON object with this structure:
 {{
     "agent_name": "<agent name>",
     "function_name": "<function to call>",
@@ -120,76 +94,74 @@ You must identify one of the exact commands listed above and return a JSON objec
     }}
 }}
 
-For example:
-- "Set the light mood based on what we talked about" → Look in history for context about a specific mood
-- "Turn those lights on" → Look in history for which room was last discussed
-
-Return null ONLY if you absolutely cannot determine a valid command and parameters from the context.
-
 For the "lights" agent:
 - set_mood requires both "room" and "mood" parameters
 - control_light requires both "room" and "state" parameters
 - set_color requires both "room" and "color" parameters
-- set_brightness requires both "room" and "brightness" parameters
-"""
+- set_brightness requires both "room" and "brightness" parameters"""
+
+        return prompt
+
+    def set_response_mode(self, mode: str):
+        """Set the response mode for the response module"""
+        self.response_module.set_response_mode(mode)
 
     async def process_command(self, command: str) -> str:
         """Process command and return response"""
         print(f"\nProcessing command in CommandProcessor: {command}")
-        
-        # Update conversation history
+
         self.conversation_history.append(("user", command))
-        
+
         try:
-            # Parse command with GPT-4
             response = self.client.chat.completions.create(
                 model="gpt-4",
                 messages=[
-                    {"role": "system", "content": """You are a command parser that converts natural language commands into structured agent commands.
-Your job is to understand user intent, including contextual references to previous conversation, and map them to specific commands.
-Always try to extract a valid command - only return null if you absolutely cannot determine the user's intent."""},
+                    {"role": "system",
+                     "content": "You are a command parser that converts natural language commands into structured agent commands."},
                     {"role": "user", "content": self._create_agent_prompt(command)}
                 ],
-                temperature=0.7  # Add some creativity for context understanding
+                temperature=0.7
             )
-            
+
             parsed_command = response.choices[0].message.content
             print(f"\nParsed command: {parsed_command}")
-            
+
             data = []
-            
+
             if parsed_command.lower() == "null":
                 print("\nNo matching agent found for command")
                 data.append(("system", "Could not understand command"))
+            elif "conversation" in parsed_command.lower():
+                # Handle general conversation
+                print("\nHandling general conversation")
+                data.append(("assistant", "I'm doing well! How can I help you today?"))
             else:
-                # Parse the agent command
                 try:
                     command_data = json.loads(parsed_command)
-                    
+
                     # Check for missing parameters and try to fill them from context
                     agent = next((a for a in self.agents if a[0] == command_data["agent_name"]), None)
                     if agent:
                         expected_params = next(
-                            (cmd["parameters"].keys() 
-                             for cmd in agent[2] 
+                            (cmd["parameters"].keys()
+                             for cmd in agent[2]
                              if isinstance(cmd, dict) and cmd["name"] == command_data["function_name"]),
                             []
                         )
-                        
+
                         for param in expected_params:
                             if param not in command_data["parameters"] or not command_data["parameters"][param]:
                                 context_value = self._extract_context_from_history(param, command_data)
                                 if context_value:
                                     command_data["parameters"][param] = context_value
                                     print(f"Filled missing parameter {param} with value: {context_value}")
-                    
+
                     agent_command = AgentCommand(
                         agent_name=command_data["agent_name"],
                         function_name=command_data["function_name"],
                         parameters=command_data["parameters"]
                     )
-                    
-                    # Get agent and execute command
+
                     agent = self.agent_instances.get(agent_command.agent_name)
                     if not agent:
                         data.append(("system", f"Agent '{agent_command.agent_name}' not found."))
@@ -204,36 +176,48 @@ Always try to extract a valid command - only return null if you absolutely canno
                             else:
                                 result = func(**agent_command.parameters)
                             data.append(("assistant", f"Result: {result}"))
-                            
+
                 except json.JSONDecodeError as e:
                     print(f"\nError parsing command JSON: {e}")
                     data.append(("system", "Error parsing command structure"))
-            
+
             # Generate response using response module
             print("\nGenerating response with ResponseModule...")
             response_text, speech_task = await self.response_module.process_response(
                 self.conversation_history,
                 data
             )
-            
+
             # Update conversation history
             self.conversation_history.append(("assistant", response_text))
-            
+
             if speech_task:
                 await speech_task
-            
+
             return response_text
-            
+
         except Exception as e:
             error_message = f"Error processing command: {str(e)}"
             print(f"\nError: {error_message}")
             self.conversation_history.append(("system", error_message))
             return error_message
 
+
 def integrate_with_voice_assistant(voice_assistant, processor):
     """Integrate command processor with voice assistant"""
+
     async def process_voice_command(command: str):
         print(f"\nProcessing voice command: {command}")
+
+        # Set response mode based on voice assistant mode
+        if voice_assistant.text_to_speech_mode:
+            processor.set_response_mode("text_to_speech")
+        elif voice_assistant.text_mode:
+            processor.set_response_mode("text")
+        else:
+            processor.set_response_mode("voice")
+
         return await processor.process_command(command)
-    
+
     voice_assistant.process_command = process_voice_command
+    voice_assistant.response_module = processor.response_module  # Share response module

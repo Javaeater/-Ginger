@@ -3,6 +3,7 @@ import os
 from dotenv import load_dotenv
 from capture_audio import VoiceListeningAssistant
 from ProcessAgent import CommandProcessor, integrate_with_voice_assistant
+from spotify_agent import SpotifyAgent
 from hue_agent import HueAgent
 import aioconsole
 
@@ -69,6 +70,41 @@ AGENTS = [
             }
         ]
     ),
+(
+        "spotify",
+        "Control Spotify playback with voice commands",
+        [
+            {
+                "name": "play_song",
+                "description": "Play a specific song, optionally filtered by artist",
+                "parameters": {
+                    "song_name": "Name of the song to play",
+                    "artist": "(Optional) Name of the artist"
+                }
+            },
+            {
+                "name": "play_artist",
+                "description": "Play top songs from a specific artist",
+                "parameters": {
+                    "artist_name": "Name of the artist to play"
+                }
+            },
+            {
+                "name": "start_artist_radio",
+                "description": "Start a radio station based on an artist",
+                "parameters": {
+                    "artist_name": "Name of the artist to base radio on"
+                }
+            },
+            {
+                "name": "play_liked_songs",
+                "description": "Play your liked songs playlist",
+                "parameters": {
+                    "shuffle": "(Optional) Whether to shuffle the playlist (default: True)"
+                }
+            }
+        ]
+    ),
 ]
 
 async def main():
@@ -94,16 +130,22 @@ async def main():
     processor = CommandProcessor(
         openai_api_key=openai_api_key,
         agents=AGENTS,
-        personality="Fiji nani",
+        personality="wise",
         mood="Welcoming"
+    )
+
+    processor.agent_instances["spotify"] = SpotifyAgent(
+        client_id=os.getenv('SPOTIFY_CLIENT_ID'),
+        client_secret=os.getenv('SPOTIFY_CLIENT_SECRET'),
+        redirect_uri=os.getenv('SPOTIFY_REDIRECT_URI')
     )
 
     # Initialize HueAgent
     #processor.agent_instances["lights"] = HueAgent(
-        #host=ha_host,
-       # token=ha_token,
-      #  openai_api_key=openai_api_key
-  #  )
+    #    host=ha_host,
+    #    token=ha_token,
+    #    openai_api_key=openai_api_key
+    #)
 
     # Create and configure voice assistant
     assistant = VoiceListeningAssistant(
@@ -117,22 +159,43 @@ async def main():
     # Start the system
     try:
         print("\nStarting assistant system...")
-        print("Type 'text mode' to enter text-only mode")
+        print("Available commands:")
+        print("- 'text mode': Enter text-only mode")
+        print("- 'voice mode': Enter voice-only mode")
+        print("- 'tts on': Enable text-to-speech in text mode")
+        print("- 'tts off': Disable text-to-speech in text mode")
+        print("- 'exit': Exit the program")
 
         while True:
             command = await aioconsole.ainput("> ")
+            command_lower = command.lower()
 
-            if command.lower() == "text mode":
+            if command_lower == "text mode":
                 print("Switching to text mode...")
                 assistant.text_mode = True
-                processor.response_module.set_text_only_mode(True)
+                processor.set_response_mode("text")
                 await assistant.start_text_mode()
-            elif command.lower() == "voice mode":
+            elif command_lower == "voice mode":
                 print("Switching to voice mode...")
                 assistant.text_mode = False
-                processor.response_module.set_text_only_mode(False)
+                assistant.text_to_speech_mode = False
+                processor.set_response_mode("voice")
                 await assistant.start_listening()
-            elif command.lower() == "exit":
+            elif command_lower == "tts on":
+                if assistant.text_mode:
+                    print("Enabling text-to-speech mode...")
+                    assistant.text_to_speech_mode = True
+                    processor.set_response_mode("text_to_speech")
+                else:
+                    print("Text-to-speech mode can only be enabled in text mode")
+            elif command_lower == "tts off":
+                if assistant.text_mode:
+                    print("Disabling text-to-speech mode...")
+                    assistant.text_to_speech_mode = False
+                    processor.set_response_mode("text")
+                else:
+                    print("Already in voice mode")
+            elif command_lower == "exit":
                 break
             else:
                 await assistant.start_listening()
