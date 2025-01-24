@@ -8,18 +8,6 @@ import pyaudio
 import struct
 import threading
 import time
-import aioconsole  # Add this import
-
-import speech_recognition as sr
-import asyncio
-from openai import OpenAI
-import wave
-import os
-import pvporcupine
-import pyaudio
-import struct
-import threading
-import time
 import aioconsole
 
 
@@ -40,7 +28,8 @@ class VoiceListeningAssistant:
 
         self.porcupine = pvporcupine.create(
             access_key=porcupine_access_key,
-            keyword_paths=["Hey-Ginger_en_mac_v3_0_0.ppn"]
+            #keyword_paths=["Hey-Ginger_en_mac_v3_0_0.ppn"]
+            keyword_paths=["Hey-Ginger_en_windows_v3_0_0.ppn"]
         )
 
         self.audio_queue = asyncio.Queue()

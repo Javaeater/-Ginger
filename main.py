@@ -5,13 +5,15 @@ from capture_audio import VoiceListeningAssistant
 from ProcessAgent import CommandProcessor, integrate_with_voice_assistant
 from spotify_agent import SpotifyAgent
 from hue_agent import HueAgent
+from tv_agent import TVAgent
+from typing import List, Dict, Tuple, Any
 import aioconsole
 
 # Load environment variables
 load_dotenv()
 
 # Define available agents with detailed command parameters
-AGENTS = [
+AGENTS: List[Tuple[str, str, List[Dict[str, Any]]]] = [
     (
         "weather",
         "Get weather information for your location",
@@ -70,7 +72,55 @@ AGENTS = [
             }
         ]
     ),
-(
+    (
+        "tv",
+        "Control Android TV through Home Assistant",
+        [
+            {
+                "name": "power_control",
+                "description": "Turn TV on or off",
+                "parameters": {
+                    "state": "Either 'on' or 'off'"
+                }
+            },
+            {
+                "name": "volume_control",
+                "description": "Control TV volume",
+                "parameters": {
+                    "action": "Action to take (up/down/mute/unmute/set)",
+                    "level": "(Optional) Volume level 0-100 when action is 'set'"
+                }
+            },
+            {
+                "name": "media_control",
+                "description": "Control media playback",
+                "parameters": {
+                    "action": "Action to take (play/pause/next/previous)"
+                }
+            },
+            {
+                "name": "launch_app",
+                "description": "Launch a specific streaming app",
+                "parameters": {
+                    "app_name": "Name of the app to launch (Netflix, Hulu, Disney+, Max, Prime Video, Apple TV)"
+                }
+            },
+            {
+                "name": "play_content",
+                "description": "Play specific content on a streaming service",
+                "parameters": {
+                    "title": "Title to search and play",
+                    "service": "Streaming service to use (Netflix, Hulu, Disney+, Max, Prime Video, Apple TV)"
+                }
+            },
+            {
+                "name": "get_status",
+                "description": "Get current TV status",
+                "parameters": {}
+            }
+        ]
+    ),
+    (
         "spotify",
         "Control Spotify playback with voice commands",
         [
@@ -113,6 +163,7 @@ async def main():
     ha_host = os.getenv('HA_HOST')
     ha_token = os.getenv('HA_TOKEN')
     porcupine_key = os.getenv('PORCUPINE_ACCESS_KEY')
+    android_tv_entity = os.getenv('TV_ENTITY_ID', 'media_player.android_tv')
 
     # Validate required environment variables
     required_vars = {
@@ -134,6 +185,7 @@ async def main():
         mood="Welcoming"
     )
 
+    # Initialize Spotify agent
     processor.agent_instances["spotify"] = SpotifyAgent(
         client_id=os.getenv('SPOTIFY_CLIENT_ID'),
         client_secret=os.getenv('SPOTIFY_CLIENT_SECRET'),
@@ -141,11 +193,17 @@ async def main():
     )
 
     # Initialize HueAgent
-    #processor.agent_instances["lights"] = HueAgent(
-    #    host=ha_host,
-    #    token=ha_token,
-    #    openai_api_key=openai_api_key
-    #)
+    processor.agent_instances["lights"] = HueAgent(
+       host=ha_host,
+       token=ha_token,
+       openai_api_key=openai_api_key
+    )
+
+    # Initialize TVAgent
+    processor.agent_instances["tv"] = TVAgent(
+        host=ha_host,
+        token=ha_token
+    )
 
     # Create and configure voice assistant
     assistant = VoiceListeningAssistant(

@@ -15,7 +15,7 @@ class AgentCommand:
 
 
 class CommandProcessor:
-    def __init__(self, openai_api_key: str, agents: List[Tuple[str, str, List[str]]],
+    def __init__(self, openai_api_key: str, agents: List[Tuple[str, str, List[Dict[str, Any]]]], 
                  personality: str = "Friendly", mood: str = "Happy"):
         self.client = openai.OpenAI(api_key=openai_api_key)
         self.agents = agents
@@ -28,11 +28,40 @@ class CommandProcessor:
         self.conversation_history = []
         self._initialize_agents()
 
+    def _extract_context_from_history(self, missing_param: str, current_command: Dict) -> str:
+        """Extract context for a missing parameter from conversation history"""
+        history_text = "\n".join([f"{role}: {content}" for role, content in self.conversation_history[-5:]])
+        
+        prompt = f"""
+            Given this conversation history:
+            {history_text}
+            Current command parameters: {json.dumps(current_command)}
+            Find the most relevant value for the missing parameter: "{missing_param}"
+            Return ONLY the value, no explanation. If no relevant value is found, return null.
+            """
+        try:
+            response = self.client.chat.completions.create(
+                model="gpt-4",
+                messages=[
+                    {"role": "system", "content": "You are a context analyzer that extracts relevant parameter values from conversation history."},
+                    {"role": "user", "content": prompt}
+                ]
+            )
+            
+            value = response.choices[0].message.content.strip()
+            return None if value.lower() == "null" else value
+            
+        except Exception as e:
+            print(f"Error extracting context: {e}")
+            return None
+
     def _initialize_agents(self):
         """Initialize agent instances"""
+        print("\nInitializing agents...")
         for agent_name, _, _ in self.agents:
             if agent_name == "weather":
                 self.agent_instances[agent_name] = WeatherAgent()
+                print(f"Initialized {agent_name} agent")
 
     def _create_agent_prompt(self, command: str) -> str:
         """Create a detailed prompt for command parsing"""
@@ -108,11 +137,12 @@ For the "lights" agent:
 
     async def process_command(self, command: str) -> str:
         """Process command and return response"""
-        print(f"\nProcessing command in CommandProcessor: {command}")
+        print(f"\nProcessing command: {command}")
 
         self.conversation_history.append(("user", command))
 
         try:
+            print("\nSending to GPT for parsing...")
             response = self.client.chat.completions.create(
                 model="gpt-4",
                 messages=[
@@ -132,12 +162,13 @@ For the "lights" agent:
                 print("\nNo matching agent found for command")
                 data.append(("system", "Could not understand command"))
             elif "conversation" in parsed_command.lower():
-                # Handle general conversation
                 print("\nHandling general conversation")
                 data.append(("assistant", "I'm doing well! How can I help you today?"))
             else:
                 try:
+                    print("\nParsing command data...")
                     command_data = json.loads(parsed_command)
+                    print(f"Command data: {command_data}")
 
                     # Check for missing parameters and try to fill them from context
                     agent = next((a for a in self.agents if a[0] == command_data["agent_name"]), None)
@@ -162,24 +193,42 @@ For the "lights" agent:
                         parameters=command_data["parameters"]
                     )
 
+                    print(f"\nLooking for agent: {agent_command.agent_name}")
+                    print(f"Available agents: {list(self.agent_instances.keys())}")
                     agent = self.agent_instances.get(agent_command.agent_name)
+
                     if not agent:
+                        print(f"Agent '{agent_command.agent_name}' not found in instances")
                         data.append(("system", f"Agent '{agent_command.agent_name}' not found."))
                     else:
+                        print(f"\nFound agent: {type(agent)}")
+                        print(f"Looking for function: {agent_command.function_name}")
+                        print(f"Available functions: {[f for f in dir(agent) if not f.startswith('_')]}")
+                        
                         func = getattr(agent, agent_command.function_name, None)
                         if not func:
+                            print(f"Function '{agent_command.function_name}' not found in agent")
                             data.append(("system", f"Function '{agent_command.function_name}' not found."))
                         else:
                             print(f"\nExecuting {agent_command.agent_name}.{agent_command.function_name}")
+                            print(f"Parameters: {agent_command.parameters}")
                             if asyncio.iscoroutinefunction(func):
+                                print("Executing async function...")
                                 result = await func(**agent_command.parameters)
                             else:
+                                print("Executing sync function...")
                                 result = func(**agent_command.parameters)
+                            print(f"Execution result: {result}")
                             data.append(("assistant", f"Result: {result}"))
 
                 except json.JSONDecodeError as e:
                     print(f"\nError parsing command JSON: {e}")
                     data.append(("system", "Error parsing command structure"))
+                except Exception as e:
+                    print(f"\nError processing command data: {e}")
+                    import traceback
+                    print(f"Traceback: {traceback.format_exc()}")
+                    data.append(("system", f"Error: {str(e)}"))
 
             # Generate response using response module
             print("\nGenerating response with ResponseModule...")
@@ -199,6 +248,8 @@ For the "lights" agent:
         except Exception as e:
             error_message = f"Error processing command: {str(e)}"
             print(f"\nError: {error_message}")
+            import traceback
+            print(f"Traceback: {traceback.format_exc()}")
             self.conversation_history.append(("system", error_message))
             return error_message
 
