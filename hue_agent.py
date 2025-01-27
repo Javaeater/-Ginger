@@ -1,12 +1,12 @@
 import requests
 from typing import Dict, Optional, Union, List
-import colorsys
 import json
 from openai import OpenAI
+import random
 
 class HueAgent:
     def __init__(self, host: str, token: str, openai_api_key: str, port: int = 8123):
-        """Initialize the Hue light control agent."""
+        """Initialize the Home Assistant light control agent."""
         self.base_url = f"http://{host}:{port}/api"
         self.headers = {
             "Authorization": f"Bearer {token}",
@@ -16,14 +16,46 @@ class HueAgent:
         
         # Predefined moods/scenes with their colors and brightness
         self.moods = {
-            "relax": {"color_name": "peach", "brightness": 40, "description": "Warm, cozy lighting for relaxation"},
-            "focus": {"color_name": "skyBlue", "brightness": 100, "description": "Bright, cool light for concentration"},
-            "energize": {"color_name": "white", "brightness": 100, "description": "Bright daylight for energy"},
-            "reading": {"color_name": "cream", "brightness": 80, "description": "Comfortable lighting for reading"},
-            "movie": {"color_name": "coral", "brightness": 20, "description": "Dim, warm light for watching movies"},
-            "sunset": {"color_name": "orange", "brightness": 60, "description": "Warm orange glow like a sunset"},
-            "ocean": {"color_name": "blue", "brightness": 70, "description": "Calming blue ocean vibes"},
-            "forest": {"color_name": "green", "brightness": 60, "description": "Natural green forest ambient"},
+            "relax": {
+                "description": "Warm, cozy lighting for relaxation",
+                "palette": ["peach", "coral", "orange", "cream"],
+                "brightness_range": (30, 50)
+            },
+            "focus": {
+                "description": "Bright, cool light for concentration",
+                "palette": ["skyblue", "white", "powder", "mint"],
+                "brightness_range": (80, 100)
+            },
+            "energize": {
+                "description": "Dynamic daylight for energy",
+                "palette": ["yellow", "white", "skyblue", "mint"],
+                "brightness_range": (90, 100)
+            },
+            "reading": {
+                "description": "Comfortable lighting for reading",
+                "palette": ["cream", "white", "peach"],
+                "brightness_range": (70, 90)
+            },
+            "movie": {
+                "description": "Dim, atmospheric light for watching movies",
+                "palette": ["navy", "purple", "blue", "steelblue"],
+                "brightness_range": (10, 30)
+            },
+            "sunset": {
+                "description": "Warm sunset glow",
+                "palette": ["orange", "coral", "pink", "gold"],
+                "brightness_range": (40, 70)
+            },
+            "ocean": {
+                "description": "Calming ocean vibes",
+                "palette": ["blue", "turquoise", "teal", "aquamarine"],
+                "brightness_range": (50, 80)
+            },
+            "forest": {
+                "description": "Natural forest ambient",
+                "palette": ["forest", "sage", "mint", "olive"],
+                "brightness_range": (40, 70)
+            }
         }
         
         # Color name to RGB mapping
@@ -50,8 +82,8 @@ class HueAgent:
             "turquoise": (64, 224, 208),
             "teal": (0, 128, 128),
             "aquamarine": (127, 255, 212),
-            "mintbreen": (152, 255, 152),
-            "seabreen": (46, 139, 87),
+            "mintgreen": (152, 255, 152),
+            "seagreen": (46, 139, 87),
             "khaki": (240, 230, 140),
             "beige": (245, 245, 220),
             "tan": (210, 180, 140),
@@ -71,10 +103,11 @@ class HueAgent:
             "powder": (176, 224, 230),
             "cream": (255, 253, 208)
         }
+        
         self._cache_lights()
 
     def _cache_lights(self) -> None:
-        """Cache available lights and their states"""
+        """Cache available lights from Home Assistant"""
         response = requests.get(
             f"{self.base_url}/states",
             headers=self.headers
@@ -103,29 +136,27 @@ class HueAgent:
         """Generate a new mood setting using GPT"""
         print(f"\nGenerating new mood: {mood_name}")
         
-        # Create an example format to guide the response
         example_format = {
-            "color_name": "blue",
-            "brightness": 70,
-            "description": "Example mood description"
+            "description": "Mood description",
+            "palette": ["color1", "color2", "color3", "color4"],
+            "brightness_range": [40, 80]
         }
         
         prompt = f"""Create a lighting mood setting called "{mood_name}".
         Available colors are: {', '.join(sorted(self.colors.keys()))}
         
         Follow these rules EXACTLY:
-        1. Choose a color from the available colors list that best matches the mood
-        2. Set an appropriate brightness (0-100) for the mood
+        1. Choose 3-4 complementary colors from the available colors list that together create the desired mood
+        2. Set an appropriate brightness range (min and max, between 0-100) for the mood
         3. Write a brief description of what the mood feels like
         4. Return ONLY a JSON object matching this exact format:
         {json.dumps(example_format, indent=2)}
         
-        The color_name MUST be one from the available colors list. DO NOT use any other colors."""
+        All colors MUST be from the available colors list. DO NOT use any other colors."""
 
         try:
-            print("Sending request to GPT...")
             response = self.openai_client.chat.completions.create(
-                model="gpt-3.5-turbo",  # Using 3.5-turbo for faster responses
+                model="gpt-3.5-turbo",
                 messages=[
                     {
                         "role": "system", 
@@ -136,63 +167,47 @@ class HueAgent:
                         "content": prompt
                     }
                 ],
-                temperature=0.7  # Add some creativity while keeping responses focused
+                temperature=0.7
             )
             
-            response_text = response.choices[0].message.content.strip()
-            print(f"GPT Response: {response_text}")
+            mood_data = json.loads(response.choices[0].message.content.strip())
             
-            # Extract JSON
-            try:
-                # Find the first { and last } to extract JSON
-                start = response_text.find('{')
-                end = response_text.rfind('}') + 1
-                if start != -1 and end != 0:
-                    json_str = response_text[start:end]
-                    mood_data = json.loads(json_str)
-                else:
-                    raise ValueError("No JSON object found in response")
-            except json.JSONDecodeError as e:
-                print(f"JSON parsing error: {str(e)}")
-                raise ValueError("Failed to parse GPT response as JSON")
-
             # Validate the response
             if not isinstance(mood_data, dict):
                 raise ValueError("GPT response is not a dictionary")
 
-            # Check required fields
-            required_fields = ["color_name", "brightness", "description"]
+            # Validate required fields
+            required_fields = ["description", "palette", "brightness_range"]
             missing_fields = [field for field in required_fields if field not in mood_data]
             if missing_fields:
                 raise ValueError(f"Missing required fields: {missing_fields}")
 
-            # Validate color name
-            color_name = mood_data["color_name"].lower()
-            if color_name not in self.colors:
-                raise ValueError(f"Invalid color name: {color_name}")
+            # Validate colors
+            palette = [color.lower() for color in mood_data["palette"]]
+            invalid_colors = [color for color in palette if color not in self.colors]
+            if invalid_colors:
+                raise ValueError(f"Invalid colors in palette: {invalid_colors}")
 
-            # Validate brightness
-            brightness = mood_data["brightness"]
-            if not isinstance(brightness, (int, float)) or not 0 <= brightness <= 100:
-                raise ValueError(f"Invalid brightness value: {brightness}")
+            # Validate brightness range
+            brightness_range = mood_data["brightness_range"]
+            if not isinstance(brightness_range, list) or len(brightness_range) != 2:
+                raise ValueError("Invalid brightness range format")
+            if not all(isinstance(b, (int, float)) and 0 <= b <= 100 for b in brightness_range):
+                raise ValueError("Invalid brightness values")
 
             # Create the validated mood
             validated_mood = {
-                "color_name": color_name,
-                "brightness": float(brightness),
-                "description": str(mood_data["description"])
+                "description": str(mood_data["description"]),
+                "palette": palette,
+                "brightness_range": tuple(sorted(brightness_range))
             }
 
             # Add to our moods dictionary
             self.moods[mood_name] = validated_mood
-            
-            print(f"Successfully created mood: {validated_mood}")
             return validated_mood
             
         except Exception as e:
             print(f"Error generating mood: {str(e)}")
-            import traceback
-            print(f"Traceback: {traceback.format_exc()}")
             raise ValueError(f"Failed to generate mood: {str(e)}")
 
     def control_light(self, room: str, state: str) -> str:
@@ -209,7 +224,8 @@ class HueAgent:
         
         try:
             service = "turn_on" if state == "on" else "turn_off"
-            if isinstance(entity_ids, list):  # For 'all' lights
+            
+            if isinstance(entity_ids, list):
                 response = requests.post(
                     f"{self.base_url}/services/light/{service}",
                     headers=self.headers,
@@ -217,7 +233,7 @@ class HueAgent:
                 )
                 response.raise_for_status()
                 return f"Turned {state} all lights"
-            else:  # For single light
+            else:
                 response = requests.post(
                     f"{self.base_url}/services/light/{service}",
                     headers=self.headers,
@@ -240,42 +256,33 @@ class HueAgent:
         
         try:
             rgb = self.colors[color.lower()]
-            print(f"Setting color for {'all lights' if isinstance(entity_ids, list) else room}")
-            print(f"Entity IDs: {entity_ids}")
-            print(f"RGB Color: {rgb}")
             
-            data = {
-                "entity_id": entity_ids,
-                "rgb_color": list(rgb)
-            }
-            print(f"Request data: {json.dumps(data, indent=2)}")
-            
-            try:
+            if isinstance(entity_ids, list):
                 response = requests.post(
                     f"{self.base_url}/services/light/turn_on",
                     headers=self.headers,
-                    json=data
+                    json={
+                        "entity_id": entity_ids,
+                        "rgb_color": list(rgb)
+                    }
                 )
-                print(f"Response status code: {response.status_code}")
-                print(f"Response content: {response.text}")
                 response.raise_for_status()
-                
-                if isinstance(entity_ids, list):
-                    return f"Set all lights to {color}"
-                else:
-                    return f"Set {room} light to {color}"
+                return f"Set all lights to {color}"
+            else:
+                response = requests.post(
+                    f"{self.base_url}/services/light/turn_on",
+                    headers=self.headers,
+                    json={
+                        "entity_id": entity_ids,
+                        "rgb_color": list(rgb)
+                    }
+                )
+                response.raise_for_status()
+                return f"Set {room} light to {color}"
                     
-            except requests.exceptions.RequestException as e:
-                print(f"Request failed: {str(e)}")
-                if hasattr(e.response, 'text'):
-                    print(f"Error response: {e.response.text}")
-                raise
-                
         except Exception as e:
             error_msg = f"Error setting color: {str(e)}"
             print(error_msg)
-            import traceback
-            print(f"Traceback: {traceback.format_exc()}")
             return error_msg
 
     def set_brightness(self, room: str, brightness: Union[int, str]) -> str:
@@ -295,7 +302,7 @@ class HueAgent:
             # Convert 0-100 to 0-255 range
             brightness_255 = int(brightness * 2.55)
             
-            if isinstance(entity_ids, list):  # For 'all' lights
+            if isinstance(entity_ids, list):
                 response = requests.post(
                     f"{self.base_url}/services/light/turn_on",
                     headers=self.headers,
@@ -306,7 +313,7 @@ class HueAgent:
                 )
                 response.raise_for_status()
                 return f"Set all lights brightness to {brightness}%"
-            else:  # For single light
+            else:
                 response = requests.post(
                     f"{self.base_url}/services/light/turn_on",
                     headers=self.headers,
@@ -324,7 +331,7 @@ class HueAgent:
             return f"Error setting brightness: {str(e)}"
 
     def set_mood(self, room: str, mood: str) -> str:
-        """Set predefined mood lighting or generate a new one"""
+        """Set mood lighting with different colors for each light"""
         try:
             mood = mood.lower()
             print(f"\nSetting mood: {mood} for {'all lights' if room.lower() == 'all' else room}")
@@ -335,59 +342,52 @@ class HueAgent:
                     new_mood = self._generate_mood(mood)
                     result_msg = f"Created new mood '{mood}': {new_mood['description']}\n"
                 except ValueError as e:
-                    print(f"Failed to generate mood: {str(e)}")
                     return f"Failed to generate mood: {str(e)}"
             else:
                 result_msg = ""
                 new_mood = self.moods[mood]
                 
-            print(f"Mood settings: {json.dumps(new_mood, indent=2)}")
-            
             entity_ids = self._find_light(room)
             if not entity_ids:
-                return f"No light found for room '{room}'"
-                
-            print(f"Entity IDs: {entity_ids}")
-            
-            # Prepare light settings
-            data = {
-                "entity_id": entity_ids,
-                "brightness": int(new_mood["brightness"] * 2.55)
-            }
-            
-            # Add color
-            if "color_name" in new_mood:
-                rgb = self.colors[new_mood["color_name"]]
-                data["rgb_color"] = list(rgb)
-                
-            print(f"Request data: {json.dumps(data, indent=2)}")
-            
-            try:
-                response = requests.post(
-                    f"{self.base_url}/services/light/turn_on",
-                    headers=self.headers,
-                    json=data
-                )
-                print(f"Response status code: {response.status_code}")
-                print(f"Response content: {response.text}")
-                response.raise_for_status()
-                
-                if isinstance(entity_ids, list):
-                    return result_msg + f"Set all lights to {mood} mood"
-                else:
-                    return result_msg + f"Set {room} light to {mood} mood"
+                return f"No lights found for room '{room}'"
+
+            if not isinstance(entity_ids, list):
+                entity_ids = [entity_ids]
+
+            success_messages = []
+            for entity_id in entity_ids:
+                try:
+                    # Randomly select color and brightness from mood's palette and range
+                    color = random.choice(new_mood["palette"])
+                    brightness = random.randint(
+                        int(new_mood["brightness_range"][0]),
+                        int(new_mood["brightness_range"][1])
+                    )
+
+                    # Set light with random color from palette and brightness
+                    data = {
+                        "entity_id": entity_id,
+                        "rgb_color": list(self.colors[color]),
+                        "brightness": int(brightness * 2.55)
+                    }
                     
-            except requests.exceptions.RequestException as e:
-                print(f"Request failed: {str(e)}")
-                if hasattr(e.response, 'text'):
-                    print(f"Error response: {e.response.text}")
-                raise
+                    response = requests.post(
+                        f"{self.base_url}/services/light/turn_on",
+                        headers=self.headers,
+                        json=data
+                    )
+                    response.raise_for_status()
+                    success_messages.append(f"Set {entity_id.replace('light.', '')} to {color}")
+
+                except requests.exceptions.RequestException as e:
+                    print(f"Error setting light {entity_id}: {str(e)}")
+                    continue
+
+            return result_msg + " and ".join(success_messages) if success_messages else f"Failed to set mood for any lights"
                 
         except Exception as e:
             error_msg = f"Error setting mood: {str(e)}"
             print(error_msg)
-            import traceback
-            print(f"Traceback: {traceback.format_exc()}")
             return error_msg
 
     def get_light_status(self, room: Optional[str] = None) -> str:
@@ -406,6 +406,7 @@ class HueAgent:
                     state_info = {
                         "power": entity["state"],
                         "brightness": f"{int(entity['attributes'].get('brightness', 0) / 2.55)}%" if "brightness" in entity["attributes"] else "unknown",
+                        "color": entity["attributes"].get("rgb_color", ["unknown"])[0] if "rgb_color" in entity["attributes"] else "unknown"
                     }
                     states[name] = state_info
             
@@ -413,11 +414,11 @@ class HueAgent:
                 room = room.lower().strip()
                 for light_name, state in states.items():
                     if room in light_name.lower():
-                        return f"The {light_name} light is {state['power']}, brightness: {state['brightness']}"
+                        return f"The {light_name} light is {state['power']}, brightness: {state['brightness']}, color: {state['color']}"
                 return f"No light found for room '{room}'"
             
             return "\n".join([
-                f"{name}: {state['power']}, brightness: {state['brightness']}"
+                f"{name}: {state['power']}, brightness: {state['brightness']}, color: {state['color']}"
                 for name, state in states.items()
             ])
             

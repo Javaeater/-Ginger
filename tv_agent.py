@@ -4,13 +4,14 @@ import time
 
 class TVAgent:
     def __init__(self, host: str, token: str, port: int = 8123):
-        """Initialize TV Agent with Home Assistant connection details"""
+        # Keep existing initialization code
         self.base_url = f"http://{host}:{port}/api"
         self.headers = {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
         }
         self.tv_entity = None
+        self.keyboard_position = 0  # Add keyboard position tracking
         self._cache_tv_entity()
 
     def _cache_tv_entity(self) -> None:
@@ -29,18 +30,18 @@ class TVAgent:
                     print(f"- {entity['entity_id']}")
                     media_players.append(entity["entity_id"])
             
-            # First try to find a TV-like entity
-            tv_keywords = ["tv", "android", "television", "smart_tv", "smarttv", "bravia"]
+            # Look for Apple TV entities
+            apple_tv_keywords = ["apple", "appletv", "apple_tv"]
             for entity_id in media_players:
-                if any(keyword in entity_id.lower() for keyword in tv_keywords):
+                if any(keyword in entity_id.lower() for keyword in apple_tv_keywords):
                     self.tv_entity = entity_id
-                    print(f"\nFound TV entity: {entity_id}")
+                    print(f"\nFound Apple TV entity: {entity_id}")
                     return
             
-            # If no TV entity found, use the first media_player
+            # If no Apple TV entity found, use the first media_player
             if media_players:
                 self.tv_entity = media_players[0]
-                print(f"\nNo specific TV entity found. Using first media_player: {self.tv_entity}")
+                print(f"\nNo specific Apple TV entity found. Using first media_player: {self.tv_entity}")
                 return
                 
             raise ValueError("No media_player entities found in Home Assistant")
@@ -49,21 +50,21 @@ class TVAgent:
             print(f"\nError accessing Home Assistant: {str(e)}")
             raise
 
-    def _get_app_launch_intent(self, app_name: str) -> Optional[str]:
-        """Get the launch intent for streaming apps on BRAVIA TV"""
-        app_intents = {
-            "Netflix": "com.netflix.ninja",
+    def _get_app_id(self, app_name: str) -> Optional[str]:
+        """Get the bundle ID for Apple TV apps"""
+        app_ids = {
+            "Netflix": "com.netflix.Netflix",
             "Disney+": "com.disney.disneyplus",
-            "Hulu": "com.hulu.livingroomplus",
-            "Prime Video": "com.amazon.amazonvideo.livingroom",
-            "Max": "com.wbd.stream",
-            "Apple TV": "com.apple.atve.androidtv.appletv",
-            "YouTube": "com.google.android.youtube.tv",
-            "YouTube TV": "com.google.android.youtube.tvunplugged",
-            "Spotify": "com.spotify.tv.android",
-            "Plex": "com.plexapp.android"
+            "Hulu": "com.hulu.plus",
+            "Prime Video": "com.amazon.aiv.AIVApp",
+            "Max": "com.hbo.hbonow",
+            "Apple TV": "com.apple.TVWatchList",
+            "YouTube": "com.google.ios.youtube",
+            "YouTube TV": "com.google.ios.youtubeunplugged",
+            "Spotify": "com.spotify.client",
+            "Plex": "com.plexapp.plex"
         }
-        return app_intents.get(app_name)
+        return app_ids.get(app_name)
 
     def _normalize_app_name(self, app_name: str) -> str:
         """Normalize streaming service names to match exact app names"""
@@ -88,7 +89,7 @@ class TVAgent:
         return app_mappings.get(app_name.lower(), app_name)
 
     def launch_app(self, app_name: str) -> str:
-        """Launch a specific app on BRAVIA Android TV"""
+        """Launch a specific app on Apple TV"""
         try:
             print(f"\nAttempting to launch {app_name}")
             
@@ -101,77 +102,30 @@ class TVAgent:
             print(f"Power control result: {power_result}")
             time.sleep(2)  # Wait for TV to be fully on
             
-            # Get app package name
-            app_package = self._get_app_launch_intent(normalized_app_name)
-            if not app_package:
+            # Get app bundle ID
+            app_id = self._get_app_id(normalized_app_name)
+            if not app_id:
                 return f"App {normalized_app_name} not supported"
 
-            print(f"\nAttempting to launch package: {app_package}")
+            print(f"\nAttempting to launch app ID: {app_id}")
             
-            # Method 1: Try using media_player service
+            # Launch app using Apple TV integration
             try:
-                print("\nTrying media_player service...")
                 response = requests.post(
                     f"{self.base_url}/services/media_player/play_media",
                     headers=self.headers,
                     json={
                         "entity_id": self.tv_entity,
-                        "media_content_id": app_package,
+                        "media_content_id": app_id,
                         "media_content_type": "app"
                     }
                 )
-                print(f"Media player response: {response.status_code}")
-                print(f"Response content: {response.text}")
-                
-                if response.status_code == 200:
-                    return f"Launched {app_name} using media_player service"
+                response.raise_for_status()
+                return f"Launched {normalized_app_name}"
                 
             except Exception as e:
-                print(f"Media player method failed: {str(e)}")
-
-            # Method 2: Try using androidtv service
-            try:
-                print("\nTrying androidtv service...")
-                response = requests.post(
-                    f"{self.base_url}/services/androidtv/adb_command",
-                    headers=self.headers,
-                    json={
-                        "entity_id": self.tv_entity,
-                        "command": "monkey",
-                        "args": ["-p", app_package, "1"]
-                    }
-                )
-                print(f"ADB response: {response.status_code}")
-                print(f"Response content: {response.text}")
-                
-                if response.status_code == 200:
-                    return f"Launched {app_name} using ADB"
-                    
-            except Exception as e:
-                print(f"ADB method failed: {str(e)}")
-
-            # Method 3: Try direct am start command
-            try:
-                print("\nTrying direct am start command...")
-                response = requests.post(
-                    f"{self.base_url}/services/androidtv/adb_command",
-                    headers=self.headers,
-                    json={
-                        "entity_id": self.tv_entity,
-                        "command": "am",
-                        "args": ["start", "-n", f"{app_package}/.MainActivity"]
-                    }
-                )
-                print(f"AM start response: {response.status_code}")
-                print(f"Response content: {response.text}")
-                
-                if response.status_code == 200:
-                    return f"Launched {app_name} using am start"
-                    
-            except Exception as e:
-                print(f"AM start method failed: {str(e)}")
-
-            return f"Failed to launch {app_name}. Please check Android TV integration in Home Assistant"
+                print(f"App launch failed: {str(e)}")
+                return f"Failed to launch {normalized_app_name}"
             
         except Exception as e:
             error_msg = f"Error launching app: {str(e)}"
@@ -179,6 +133,255 @@ class TVAgent:
             import traceback
             print(f"Traceback: {traceback.format_exc()}")
             return error_msg
+
+    def _move_to_position(self, target_pos) -> list:
+        """Calculate moves needed to reach target position from current position"""
+        if self.keyboard_position < target_pos:
+            commands = ["right"] * (target_pos - self.keyboard_position)
+        else:
+            commands = ["left"] * (self.keyboard_position - target_pos)
+        self.keyboard_position = target_pos
+        return commands
+
+    def _reset_keyboard_prime(self) -> list:
+        """Reset keyboard to starting position"""
+        commands = ["select","left","up","select","left","left"]  # Go back to main menu
+        self.keyboard_position = 0  # Reset position tracker
+        response = requests.post(
+                        f"{self.base_url}/services/remote/send_command",
+                        headers=self.headers,
+                        json={
+                            "entity_id": self.tv_entity.replace('media_player', 'remote'),
+                            "command": ["menu", "menu", "menu", "menu", "menu", "menu"]
+                        }
+                    )
+        response.raise_for_status()
+        launch_result = self.launch_app('Prime Video')
+        print(f"\nLaunch result: {launch_result}")
+        time.sleep(5)  # Wait for app to fully launch
+        response = requests.post(
+                        f"{self.base_url}/services/remote/send_command",
+                        headers=self.headers,
+                        json={
+                            "entity_id": self.tv_entity.replace('media_player', 'remote'),
+                            "command": commands
+                        }
+                    )
+        response.raise_for_status()
+        time.sleep(2)
+        return commands
+    
+    def _reset_keyboard_apple(self) -> list:
+        """Reset keyboard to starting position"""
+        commands = ["up","up","up","up","up","up","up","up","up","up","up","down", "select", "right", "right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select", "left", "left", "left","left","left","left","left","left","left","left","left","left","left","left","left","left","left","left","left","left","left","left","left","left","left","left","left","left"]  # Go back to main menu
+        self.keyboard_position = 0  # Reset position tracker
+        response = requests.post(
+                        f"{self.base_url}/services/remote/send_command",
+                        headers=self.headers,
+                        json={
+                            "entity_id": self.tv_entity.replace('media_player', 'remote'),
+                            "command": ["menu", "menu", "menu", "menu", "menu", "menu"]
+                        }
+                    )
+        response.raise_for_status()
+        launch_result = self.launch_app('Apple TV')
+        print(f"\nLaunch result: {launch_result}")
+        time.sleep(5)  # Wait for app to fully launch
+        response = requests.post(
+                        f"{self.base_url}/services/remote/send_command",
+                        headers=self.headers,
+                        json={
+                            "entity_id": self.tv_entity.replace('media_player', 'remote'),
+                            "command": commands
+                        }
+                    )
+        response.raise_for_status()
+        time.sleep(2)
+        return commands
+    
+    def _reset_keyboard_netflix(self) -> list:
+        """Reset keyboard to starting position"""
+        commands = ["up","up","up","up","up","up","up","up","down","down", "select", "up","up","up","up","up","up","up","right", "right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","right","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select","select", "left", "left", "left","left","left","left","left","left","left","left","left","left","left","left","left","left","left","left","left","left","left","left","left","left","left","left","left","left"]  # Go back to main menu
+        self.keyboard_position = 0  # Reset position tracker
+        response = requests.post(
+                        f"{self.base_url}/services/remote/send_command",
+                        headers=self.headers,
+                        json={
+                            "entity_id": self.tv_entity.replace('media_player', 'remote'),
+                            "command": ["menu", "menu", "menu", "menu"]
+                        }
+                    )
+        response.raise_for_status()
+        launch_result = self.launch_app('Netflix')
+        print(f"\nLaunch result: {launch_result}")
+        time.sleep(5)  # Wait for app to fully launch
+        response = requests.post(
+                        f"{self.base_url}/services/remote/send_command",
+                        headers=self.headers,
+                        json={
+                            "entity_id": self.tv_entity.replace('media_player', 'remote'),
+                            "command": commands
+                        }
+                    )
+        response.raise_for_status()
+        time.sleep(2)
+        return commands
+
+    def _char_to_remote_commands(self, char: str) -> list:
+        """Convert a character to remote control commands for Apple TV keyboard"""
+        char = char.lower()
+        commands = []
+        
+        if char == ' ':
+            # Move to space from current position
+            commands = self._move_to_position(1)
+            commands.append("select")
+            
+        elif char.isalpha():
+            # Calculate letter position (a=2, b=3, etc.)
+            target_pos = ord(char) - ord('a') + 2
+            commands = self._move_to_position(target_pos)
+            commands.append("select")
+            
+        elif char.isdigit():
+            num = int(char)
+            # First move to number selector (position 1)
+            commands = self._move_to_position(0)
+            commands.append("select")
+            # Then select specific number
+            if num == 0:
+                num = 10
+            commands.extend(["right"] * (num - 1) + ["select"])
+            # Reset position after number input
+            self.keyboard_position = 0
+            commands.append("select")
+            commands.append("select")
+            
+        return commands
+
+    def play_content(self, title: str, service: str) -> str:
+        """Play specific content using remote controls to search"""
+        try:
+            # Normalize service name
+            service = self._normalize_app_name(service)
+            
+            # First launch the appropriate app
+            launch_result = self.launch_app(service)
+            print(f"\nLaunch result: {launch_result}")
+            time.sleep(3)  # Wait for app to fully launch
+            
+            if service == "Netflix":
+                try:
+                    # Reset keyboard and navigate to search
+                    self._reset_keyboard_netflix() 
+                    # Input the title character by character
+                    for char in title:
+                        commands = self._char_to_remote_commands(char)
+                        if commands:
+                            print(f"Current position: {self.keyboard_position}, Commands for '{char}': {commands}")
+                            response = requests.post(
+                                f"{self.base_url}/services/remote/send_command",
+                                headers=self.headers,
+                                json={
+                                    "entity_id": self.tv_entity.replace('media_player', 'remote'),
+                                    "command": commands
+                                }
+                            )
+                            response.raise_for_status()
+                            time.sleep(1)  # Wait between characters
+                    
+                    # After entering title, wait then select first result
+                    time.sleep(3)
+                    response = requests.post(
+                        f"{self.base_url}/services/remote/send_command",
+                        headers=self.headers,
+                        json={
+                            "entity_id": self.tv_entity.replace('media_player', 'remote'),
+                            "command": ["down", "select"]
+                        }
+                    )
+                    return f"Searched for '{title}' on {service}"
+                    
+                except Exception as e:
+                    print(f"Search failed: {str(e)}")
+                    return f"Error searching for '{title}' on {service}"
+                
+            if service == "Prime Video":
+                try:
+                    # Reset keyboard and navigate to search
+                    self._reset_keyboard_prime() 
+                    # Input the title character by character
+                    for char in title:
+                        commands = self._char_to_remote_commands(char)
+                        if commands:
+                            print(f"Current position: {self.keyboard_position}, Commands for '{char}': {commands}")
+                            response = requests.post(
+                                f"{self.base_url}/services/remote/send_command",
+                                headers=self.headers,
+                                json={
+                                    "entity_id": self.tv_entity.replace('media_player', 'remote'),
+                                    "command": commands
+                                }
+                            )
+                            response.raise_for_status()
+                            time.sleep(1)  # Wait between characters
+                    
+                    # After entering title, wait then select first result
+                    time.sleep(3)
+                    response = requests.post(
+                        f"{self.base_url}/services/remote/send_command",
+                        headers=self.headers,
+                        json={
+                            "entity_id": self.tv_entity.replace('media_player', 'remote'),
+                            "command": ["down", "select","down","down","down","select"]
+                        }
+                    )
+                    return f"Searched for '{title}' on {service}"
+                    
+                except Exception as e:
+                    print(f"Search failed: {str(e)}")
+                    return f"Error searching for '{title}' on {service}"
+
+        except Exception as e:
+            print(f"Error: {str(e)}")
+            return f"Failed to play content"
+        
+        if service == "Apple TV":
+                try:
+                    # Reset keyboard and navigate to search
+                    self._reset_keyboard_apple() 
+                    # Input the title character by character
+                    for char in title:
+                        commands = self._char_to_remote_commands(char)
+                        if commands:
+                            print(f"Current position: {self.keyboard_position}, Commands for '{char}': {commands}")
+                            response = requests.post(
+                                f"{self.base_url}/services/remote/send_command",
+                                headers=self.headers,
+                                json={
+                                    "entity_id": self.tv_entity.replace('media_player', 'remote'),
+                                    "command": commands
+                                }
+                            )
+                            response.raise_for_status()
+                            time.sleep(1)  # Wait between characters
+                    
+                    # After entering title, wait then select first result
+                    time.sleep(3)
+                    response = requests.post(
+                        f"{self.base_url}/services/remote/send_command",
+                        headers=self.headers,
+                        json={
+                            "entity_id": self.tv_entity.replace('media_player', 'remote'),
+                            "command": ["down","down","select"]
+                        }
+                    )
+                    return f"Searched for '{title}' on {service}"
+                    
+                except Exception as e:
+                    print(f"Search failed: {str(e)}")
+                    return f"Error searching for '{title}' on {service}"
+
 
     def power_control(self, state: str) -> str:
         """Turn TV on/off"""
@@ -270,113 +473,8 @@ class TVAgent:
         except:
             return 0.5
 
-    def play_content(self, title: str, service: str) -> str:
-        """Play specific content on a streaming service"""
-        try:
-            print(f"\nAttempting to play {title} on {service}")
-            
-            # First launch the streaming service
-            launch_result = self.launch_app(service)
-            print(f"Service launch result: {launch_result}")
-            
-            # Wait for app to load
-            time.sleep(10)  # Give Netflix more time to fully load
-            
-            # Use ADB input commands for more reliable control
-            commands = [
-                # Press search button (keycode 84)
-                ["input", "keyevent", "84"],
-                ["sleep", "2"],
-                
-                # Input the search text
-                ["input", "text", title.replace(" ", "%s")],
-                ["sleep", "2"],
-                
-                # Press enter to search
-                ["input", "keyevent", "66"],
-                ["sleep", "3"],
-                
-                # Press enter again to select first result
-                ["input", "keyevent", "66"],
-                ["sleep", "2"],
-                
-                # Press enter one more time to start playback
-                ["input", "keyevent", "66"]
-            ]
-            
-            print("\nExecuting ADB commands...")
-            for cmd in commands:
-                try:
-                    if cmd[0] == "sleep":
-                        time.sleep(float(cmd[1]))
-                        continue
-                        
-                    response = requests.post(
-                        f"{self.base_url}/services/androidtv/adb_command",
-                        headers=self.headers,
-                        json={
-                            "entity_id": self.tv_entity,
-                            "command": cmd[0],
-                            "args": cmd[1:]
-                        }
-                    )
-                    print(f"ADB command {cmd} response: {response.status_code}")
-                    
-                except Exception as e:
-                    print(f"ADB command failed: {e}")
-            
-            return f"Attempting to play {title} on {service}"
-            
-        except Exception as e:
-            error_msg = f"Error playing content: {str(e)}"
-            print(f"\nDetailed error: {error_msg}")
-            import traceback
-            print(f"Traceback: {traceback.format_exc()}")
-            return error_msg
-
-    def _send_bravia_command(self, command: str) -> None:
-        """Send a command to the BRAVIA TV"""
-        try:
-            response = requests.post(
-                f"{self.base_url}/services/media_player/play_media",
-                headers=self.headers,
-                json={
-                    "entity_id": self.tv_entity,
-                    "media_content_id": f"button://{command}",
-                    "media_content_type": "command"
-                }
-            )
-            print(f"Command {command} response: {response.status_code}")
-        except Exception as e:
-            print(f"Error sending command {command}: {e}")
-
-    def _simulate_keyboard_input(self, text: str) -> None:
-        """Simulate keyboard input for search"""
-        for char in text:
-            # First navigate to the character on the virtual keyboard
-            # This is a simplified version - might need adjustment
-            self._send_bravia_command("Confirm")  # Select character
-            time.sleep(0.5)
-
-            
-        try:
-            if action.lower() in ['play', 'pause']:
-                service = "media_play" if action.lower() == "play" else "media_pause"
-            else:
-                service = "media_next_track" if action.lower() == "next" else "media_previous_track"
-                
-            response = requests.post(
-                f"{self.base_url}/services/media_player/{service}",
-                headers=self.headers,
-                json={"entity_id": self.tv_entity}
-            )
-            response.raise_for_status()
-            return f"Media {action} command sent"
-        except Exception as e:
-            return f"Error controlling media: {str(e)}"
-
-    def media_control(self, action: str) -> str:
-        """Control media playback - play/pause/next/previous"""
+    def get_tv_state(self) -> str:
+        """Get current TV state including power, volume, and current app"""
         try:
             response = requests.get(
                 f"{self.base_url}/states/{self.tv_entity}",
