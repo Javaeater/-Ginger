@@ -253,27 +253,27 @@ class AssistantSystem:
             )
             print("✓ Spotify agent initialized")
 
-            # Initialize HueAgent
-            # self.processor.agent_instances["lights"] = HueAgent(
-            #     host=config['ha_host'],
-            #     token=config['ha_token'],
-            #     openai_api_key=config['openai_api_key']
-            # )
-            # print("✓ Hue agent initialized")
+            #Initialize HueAgent
+            self.processor.agent_instances["lights"] = HueAgent(
+                host=config['ha_host'],
+                token=config['ha_token'],
+                openai_api_key=config['openai_api_key']
+            )
+            print("✓ Hue agent initialized")
 
-            # Initialize TVAgent
-            # self.processor.agent_instances["tv"] = TVAgent(
-            #     host=config['ha_host'],
-            #     token=config['ha_token']
-            # )
-            # print("✓ TV agent initialized")
+            #Initialize TVAgent
+            self.processor.agent_instances["tv"] = TVAgent(
+                host=config['ha_host'],
+                token=config['ha_token']
+            )
+            print("✓ TV agent initialized")
 
-            # Initialize RoombaAgent
-            # self.processor.agent_instances["roomba"] = RoombaAgent(
-            #     host=config['ha_host'],
-            #     token=config['ha_token']
-            # )
-            # print("✓ Roomba agent initialized")
+            #Initialize RoombaAgent
+            self.processor.agent_instances["roomba"] = RoombaAgent(
+                host=config['ha_host'],
+                token=config['ha_token']
+            )
+            print("✓ Roomba agent initialized")
 
         except Exception as e:
             print(f"Error initializing agents: {e}")
