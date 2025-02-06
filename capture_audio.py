@@ -28,8 +28,8 @@ class VoiceListeningAssistant:
 
         self.porcupine = pvporcupine.create(
             access_key=porcupine_access_key,
-            #keyword_paths=["Hey-Ginger_en_mac_v3_0_0.ppn"]
-            keyword_paths=["Hey-Ginger_en_windows_v3_0_0.ppn"]
+            keyword_paths=["Hey-Ginger_en_mac_v3_0_0.ppn"]
+            #keyword_paths=["Hey-Ginger_en_windows_v3_0_0.ppn"]
         )
 
         self.audio_queue = asyncio.Queue()

@@ -138,40 +138,6 @@ class SpotifyAgent:
         except Exception as e:
             return f"Error playing artist: {str(e)}"
 
-    def start_artist_radio(self, artist_name: str) -> str:
-        """Start a radio station based on an artist."""
-        try:
-            # Search for the artist
-            results = self.sp.search(q=artist_name, type='artist', limit=1)
-
-            if not results['artists']['items']:
-                return f"Could not find artist: {artist_name}"
-
-            artist_uri = results['artists']['items'][0]['uri']
-
-            # Get recommendations based on the artist
-            recommendations = self.sp.recommendations(
-                seed_artists=[artist_uri],
-                limit=50
-            )
-
-            if not recommendations['tracks']:
-                return f"Could not generate radio for {artist_name}"
-
-            track_uris = [track['uri'] for track in recommendations['tracks']]
-            device_id = self._get_active_device()
-
-            if not device_id:
-                return "No active Spotify device found"
-
-            # Start playback with recommended tracks
-            self.sp.start_playback(device_id=device_id, uris=track_uris)
-
-            return f"Started radio based on {artist_name}"
-
-        except Exception as e:
-            return f"Error starting artist radio: {str(e)}"
-
     def play_liked_songs(self, shuffle: bool = True) -> str:
         """Play user's liked songs, optionally shuffled."""
         try:

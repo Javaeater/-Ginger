@@ -9,7 +9,7 @@ class WeatherAgent:
     async def get_weather_today(self, location):
         async with python_weather.Client(unit=python_weather.IMPERIAL) as client:
             weather = await client.get(location)
-            return weather.temperature
+            return str(weather.temperature)
 
 if __name__ == '__main__':
     agent = WeatherAgent("San Francisco")

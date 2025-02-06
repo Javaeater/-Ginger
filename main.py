@@ -130,7 +130,7 @@ AGENTS: List[Tuple[str, str, List[Dict[str, Any]]]] = [
         [
             {
                 "name": "play_song",
-                "description": "Play a specific song, optionally filtered by artist",
+                "description": "Play a specific song by name, optionally filtered by artist",
                 "parameters": {
                     "song_name": "Name of the song to play",
                     "artist": "(Optional) Name of the artist"
@@ -141,13 +141,6 @@ AGENTS: List[Tuple[str, str, List[Dict[str, Any]]]] = [
                 "description": "Play top songs from a specific artist",
                 "parameters": {
                     "artist_name": "Name of the artist to play"
-                }
-            },
-            {
-                "name": "start_artist_radio",
-                "description": "Start a radio station based on an artist",
-                "parameters": {
-                    "artist_name": "Name of the artist to base radio on"
                 }
             },
             {
@@ -261,26 +254,26 @@ class AssistantSystem:
             print("✓ Spotify agent initialized")
 
             # Initialize HueAgent
-            self.processor.agent_instances["lights"] = HueAgent(
-                host=config['ha_host'],
-                token=config['ha_token'],
-                openai_api_key=config['openai_api_key']
-            )
-            print("✓ Hue agent initialized")
+            # self.processor.agent_instances["lights"] = HueAgent(
+            #     host=config['ha_host'],
+            #     token=config['ha_token'],
+            #     openai_api_key=config['openai_api_key']
+            # )
+            # print("✓ Hue agent initialized")
 
             # Initialize TVAgent
-            self.processor.agent_instances["tv"] = TVAgent(
-                host=config['ha_host'],
-                token=config['ha_token']
-            )
-            print("✓ TV agent initialized")
+            # self.processor.agent_instances["tv"] = TVAgent(
+            #     host=config['ha_host'],
+            #     token=config['ha_token']
+            # )
+            # print("✓ TV agent initialized")
 
             # Initialize RoombaAgent
-            self.processor.agent_instances["roomba"] = RoombaAgent(
-                host=config['ha_host'],
-                token=config['ha_token']
-            )
-            print("✓ Roomba agent initialized")
+            # self.processor.agent_instances["roomba"] = RoombaAgent(
+            #     host=config['ha_host'],
+            #     token=config['ha_token']
+            # )
+            # print("✓ Roomba agent initialized")
 
         except Exception as e:
             print(f"Error initializing agents: {e}")
