@@ -1,18 +1,13 @@
 import asyncio
 from openai import AsyncOpenAI
 from pathlib import Path
-from pydub import AudioSegment
 from concurrent.futures import ThreadPoolExecutor
-import hashlib
-import aiofiles
-import json
 import tempfile
-from cachetools import LRUCache
-import time
 from typing import Optional, Tuple, List, Dict, Any
-import gc
 import pygame
-import io
+import pygame.mixer
+import time
+import os
 
 
 class HighPerformanceResponseModule:
@@ -93,37 +88,74 @@ Current Mood: {self.mood}"""
             print(f"Error generating response: {e}")
             return f"I apologize, but I encountered an error: {str(e)}"
 
-
     async def generate_speech_response(self, text: str):
-        """Generate and play speech response with improved error handling and caching"""
+        """Generate and play speech response with improved Raspberry Pi compatibility"""
+        temp_file = None
         try:
-            # Get voice parameters based on current context
+            # Get voice parameters
             voice_params = self.adjust_voice_parameters(text)
-            temp_file = self.temp_dir / f"temp_audio.mp3"
+
+            # Create unique temp file
+            timestamp = int(time.time() * 1000)
+            temp_file = self.temp_dir / f"temp_audio_{timestamp}.mp3"
+
+            # Generate speech
             response = await self.client.audio.speech.create(
                 model="tts-1",
                 voice=voice_params["voice"],
                 input=text,
             )
 
-            response.stream_to_file(str(temp_file))
+            # Stream to file with explicit close
+            with open(temp_file, 'wb') as f:
+                for chunk in response.iter_bytes(chunk_size=4096):
+                    f.write(chunk)
 
-            # Play with pygame
-            pygame.mixer.music.load(str(temp_file))
-            pygame.mixer.music.play()
+            # Ensure file exists and has content
+            if not temp_file.exists() or temp_file.stat().st_size == 0:
+                raise Exception("Audio file was not created successfully")
 
-            # Wait for playback to finish
-            while pygame.mixer.music.get_busy():
-                await asyncio.sleep(0.1)
+            # Load and play with extra error checking
+            try:
+                if not pygame.mixer.get_init():
+                    pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=4096)
+
+                pygame.mixer.music.load(str(temp_file))
+                pygame.mixer.music.play()
+
+                # Wait for playback with timeout
+                start_time = time.time()
+                while pygame.mixer.music.get_busy():
+                    await asyncio.sleep(0.1)
+                    if time.time() - start_time > 30:  # 30 second timeout
+                        pygame.mixer.music.stop()
+                        break
+
+            except Exception as audio_error:
+                print(f"Playback error: {audio_error}")
+                # Try to reinitialize mixer
+                pygame.mixer.quit()
+                pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=4096)
+                raise
 
         except Exception as e:
             print(f"Error in speech generation: {e}")
+            self.current_mode = self.TEXT_MODE  # Fallback to text mode
+            raise
 
         finally:
             # Cleanup
-            pygame.mixer.music.unload()
-            if temp_file.exists():
-                temp_file.unlink()
+            try:
+                pygame.mixer.music.unload()
+            except:
+                pass
+
+            # Remove temp file
+            if temp_file and temp_file.exists():
+                try:
+                    os.remove(temp_file)
+                except Exception as e:
+                    print(f"Error removing temp file: {e}")
 
     async def process_response(self) -> Tuple[
         str, Optional[asyncio.Task]]:
