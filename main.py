@@ -10,6 +10,7 @@ from roomba_agent import RoombaAgent
 from typing import List, Dict, Tuple, Any
 import aioconsole
 import json
+from conversation_agent import ConversationAgent
 import signal
 import sys
 
@@ -18,6 +19,17 @@ load_dotenv()
 
 # Define available agents with detailed command parameters
 AGENTS: List[Tuple[str, str, List[Dict[str, Any]]]] = [
+    (
+        "conversation",
+        "Handle any general conversation",
+        [
+            {
+                "name": "chat",
+                "description": "Chat with the agent",
+                "parameters": {}
+            },
+        ]
+    ),
     (
         "weather",
         "Get weather information for your location",
@@ -130,7 +142,7 @@ AGENTS: List[Tuple[str, str, List[Dict[str, Any]]]] = [
         [
             {
                 "name": "play_song",
-                "description": "Play a specific song by name, optionally filtered by artist",
+                "description": "Play a specific song name, optionally filtered by artist",
                 "parameters": {
                     "song_name": "Name of the song to play",
                     "artist": "(Optional) Name of the artist"
@@ -162,7 +174,7 @@ AGENTS: List[Tuple[str, str, List[Dict[str, Any]]]] = [
                 "parameters": {}
             },
             {
-                "name": "stop_cleaning", 
+                "name": "stop_cleaning",
                 "description": "Stop cleaning",
                 "parameters": {}
             },
@@ -185,24 +197,27 @@ AGENTS: List[Tuple[str, str, List[Dict[str, Any]]]] = [
     )
 ]
 
+
 class AssistantSystem:
     def __init__(self):
         self.processor = None
         self.assistant = None
         self.shutdown_event = asyncio.Event()
+        self.assistant_history = []
 
     async def initialize(self):
         """Initialize the assistant system with improved error handling"""
         try:
             # Get and validate configuration
             config = self._load_config()
-            
+
             # Initialize command processor with context awareness
             self.processor = CommandProcessor(
                 openai_api_key=config['openai_api_key'],
                 agents=AGENTS,
                 personality="wise",
-                mood="Welcoming"
+                mood="Welcoming",
+                assistant_history=self.assistant_history
             )
 
             # Initialize agents with improved error handling
@@ -245,6 +260,12 @@ class AssistantSystem:
     async def _initialize_agents(self, config: Dict[str, str]):
         """Initialize agents with improved error handling and logging"""
         try:
+
+            # Initialize Conversation
+            self.processor.agent_instances["conversation"] = ConversationAgent(
+            )
+            print("✓ Conversation agent initialized")
+
             # Initialize Spotify agent
             self.processor.agent_instances["spotify"] = SpotifyAgent(
                 client_id=config['spotify_client_id'],
@@ -253,7 +274,7 @@ class AssistantSystem:
             )
             print("✓ Spotify agent initialized")
 
-            #Initialize HueAgent
+            # Initialize HueAgent
             self.processor.agent_instances["lights"] = HueAgent(
                 host=config['ha_host'],
                 token=config['ha_token'],
@@ -261,14 +282,14 @@ class AssistantSystem:
             )
             print("✓ Hue agent initialized")
 
-            #Initialize TVAgent
+            # Initialize TVAgent
             self.processor.agent_instances["tv"] = TVAgent(
                 host=config['ha_host'],
                 token=config['ha_token']
             )
             print("✓ TV agent initialized")
 
-            #Initialize RoombaAgent
+            # Initialize RoombaAgent
             self.processor.agent_instances["roomba"] = RoombaAgent(
                 host=config['ha_host'],
                 token=config['ha_token']
@@ -281,9 +302,44 @@ class AssistantSystem:
 
     def _setup_signal_handlers(self):
         """Setup signal handlers for graceful shutdown"""
+
         def signal_handler(sig, frame):
             print("\nInitiating graceful shutdown...")
 
+    async def clear_conversation(self):
+        """Clear conversation history and context memory"""
+        try:
+            # Clear conversation history
+            self.processor.conversation_history.clear()
+
+            # Clear context memory in response module
+            self.processor.response_module.context_memory = {
+                'topics': [],
+                'user_preferences': {},
+                'last_commands': [],
+                'emotional_state': {'current': 'neutral', 'history': []},
+                'recent_responses': [],
+                'conversation_flow': {
+                    'last_topics': [],
+                    'response_variations': set(),
+                    'topic_depth': {}
+                }
+            }
+
+            # Clear command cache
+            self.processor.command_cache.cache.clear()
+
+            # Clear suggestion cache and pending suggestions
+            self.processor.suggestion_cache.clear()
+            self.processor.pending_suggestion = None
+
+            # Clear response and audio caches in response module
+            self.processor.response_module.response_cache.clear()
+            self.processor.response_module.audio_cache.clear()
+
+            return "Conversation history and caches cleared successfully."
+        except Exception as e:
+            return f"Error clearing conversation: {str(e)}"
 
     async def process_command(self, command: str):
         """Process commands with improved error handling"""
@@ -315,6 +371,9 @@ class AssistantSystem:
                     self.processor.set_response_mode("text")
                 else:
                     print("Already in voice mode")
+            elif command_lower == "clear":
+                result = await self.clear_conversation()
+                print(result)
             elif command_lower == "status":
                 await self._print_system_status()
             elif command_lower == "help":
@@ -332,6 +391,7 @@ class AssistantSystem:
         print("  voice mode   - Enter voice-only mode")
         print("  tts on       - Enable text-to-speech in text mode")
         print("  tts off      - Disable text-to-speech in text mode")
+        print("  clear        - Clear conversation history and caches")
         print("  status       - Display system status")
         print("  help         - Show this help message")
         print("  exit         - Exit the program")
@@ -350,7 +410,7 @@ class AssistantSystem:
     async def run(self):
         """Run the assistant system with improved error handling and shutdown"""
         self._setup_signal_handlers()
-        
+
         print("\nStarting assistant system...")
         self._print_help()
 
@@ -378,10 +438,11 @@ class AssistantSystem:
         except Exception as e:
             print(f"Error during cleanup: {e}")
 
+
 async def main():
     """Main entry point with improved error handling"""
     system = AssistantSystem()
-    
+
     try:
         if await system.initialize():
             await system.run()
@@ -391,6 +452,7 @@ async def main():
         print(f"Critical error: {e}")
     finally:
         await system._cleanup()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

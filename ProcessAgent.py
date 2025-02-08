@@ -47,16 +47,18 @@ class CommandCache:
 
 class CommandProcessor:
     def __init__(self, openai_api_key: str, agents: List[Tuple[str, str, List[Dict[str, Any]]]],
-                 personality: str = "Friendly", mood: str = "Happy"):
+                 personality: str = "Friendly", mood: str = "Happy", assistant_history: List = None):
         self.client = openai.OpenAI(api_key=openai_api_key)
         self.agents = agents
         self.agent_instances = {}
+        self.assistant_history = assistant_history
         self.response_module = HighPerformanceResponseModule(
             personality=personality,
             mood=mood,
-            openai_api_key=openai_api_key
+            openai_api_key=openai_api_key,
+            assistant_history=self.assistant_history
         )
-        self.conversation_history = []
+        self.assistant_history = []
         self.command_cache = CommandCache()
         self.suggestion_cache = {}
         self.pending_suggestion: Optional[SuggestedAction] = None
@@ -67,12 +69,9 @@ class CommandProcessor:
     async def process_command(self, command: str) -> str:
         """Process command with improved context flow and suggestion handling."""
         print(f"\nProcessing command: {command}")
-        self.conversation_history.append(("user", command))
+        self.assistant_history.append(("user", command))
 
         try:
-            # Check if this is a confirmation of a pending suggestion
-            if self.pending_suggestion and await self._is_confirmation(command):
-                return await self._execute_suggested_action()
 
             # Regular command processing flow
             command_context = await self._extract_command_context(command)
@@ -84,85 +83,16 @@ class CommandProcessor:
                 return "Could not create agent command"
 
             execution_result = await self._execute_agent_command(agent_command, command_context)
-            response = await self._generate_contextual_response(command, command_context, execution_result)
+            self.response_module.update_history(self.assistant_history)
+            response = await self.response_module.process_response()
 
             return response
 
         except Exception as e:
             error_message = f"Error processing command: {str(e)}"
             print(f"\nError: {error_message}")
-            self.conversation_history.append(("system", error_message))
+            self.assistant_history.append(("system", error_message))
             return error_message
-
-    async def _is_confirmation(self, command: str) -> bool:
-        """Cost-optimized confirmation check."""
-        if not self.pending_suggestion:
-            return False
-
-        # First try simple keyword matching to avoid API call
-        positive_keywords = {'yes', 'sure', 'okay', 'ok', 'yep', 'yeah', 'go ahead', 'sounds good', 'awesome'}
-        if any(keyword in command.lower() for keyword in positive_keywords):
-            return True
-
-        # Only use GPT API for ambiguous cases
-        try:
-            response = self.client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {"role": "system", "content": "Determine if this is a confirmation. Return only 'yes' or 'no'."},
-                    {"role": "user", "content": f"Is this confirming or agreeing: {command}"}
-                ],
-                temperature=0.3,
-                max_tokens=5  # Minimal tokens needed
-            )
-            return "yes" in response.choices[0].message.content.lower()
-        except Exception as e:
-            print(f"Error checking confirmation: {e}")
-            return False
-
-    async def _execute_suggested_action(self) -> str:
-        """Execute a previously suggested action with explicit tracking."""
-        if not self.pending_suggestion:
-            return "No pending suggestion to execute"
-
-        try:
-            print(f"\nExecuting suggested action: {self.pending_suggestion}")
-
-            # Create command with exact parameters from suggestion
-            agent_command = AgentCommand(
-                agent_name=self.pending_suggestion.agent_name,
-                function_name=self.pending_suggestion.function_name,
-                parameters=self.pending_suggestion.parameters
-            )
-
-            # Add suggestion context to execution
-            execution_context = {
-                "suggestion_execution": True,
-                "original_suggestion": self.pending_suggestion.suggestion_context,
-                "exact_parameters": self.pending_suggestion.parameters
-            }
-
-            execution_result = await self._execute_agent_command(
-                agent_command,
-                execution_context
-            )
-
-            # Store suggestion before clearing it
-            executed_suggestion = self.pending_suggestion
-            self.pending_suggestion = None
-
-            # Generate response with explicit reference to executed suggestion
-            response = await self._generate_contextual_response(
-                f"Executing suggested action: {executed_suggestion.suggestion_context}",
-                execution_context,
-                execution_result
-            )
-
-            return response
-
-        except Exception as e:
-            self.pending_suggestion = None
-            return f"Error executing suggested action: {str(e)}"
 
     async def _validate_and_refine_command(self, command_data: Dict[str, Any]) -> Dict[str, Any]:
         """Validates and refines command parameters using conversation context."""
@@ -180,8 +110,8 @@ class CommandProcessor:
             if not func_def:
                 return command_data
 
-            recent_messages = self.conversation_history[-5:]
-            context_text = "\n".join([f"{role}: {content}" for role, content in recent_messages])
+            recent_messages = self.assistant_history[-5:]
+            context_text = "\n".join([f"{message[0]}: {message[1]}" for message in recent_messages])
 
             param_info = {}
             if func_def and "parameters" in func_def:
@@ -214,7 +144,7 @@ class CommandProcessor:
                             "current_value": command_data["parameters"].get(param_name)
                         }
 
-            validation_prompt = f"""Given the following conversation context and parameter requirements, validate and refine the command parameters.
+            validation_prompt = f"""Given the following conversation context and parameter requirements, validate and refine the command parameters. Make sure that the params match what the user is asking with natural language. Feel free to change to what oyu feel is best for what the user is asking 
 
 Recent Conversation:
 {context_text}
@@ -371,13 +301,6 @@ Example for music:
     async def _extract_command_context(self, command: str) -> Dict[str, Any]:
         """Extract context from command and conversation history."""
         try:
-            recent_context = self._get_recent_context()
-
-            # Try cache first
-            cached_result = self.command_cache.get(command, recent_context)
-            if cached_result:
-                return cached_result
-
             # Create context-aware prompt
             prompt = self._create_agent_prompt(command)
 
@@ -395,23 +318,10 @@ Example for music:
             # Parse command data
             command_data = json.loads(response.choices[0].message.content)
 
-            # Enhance with emotional and contextual information
-            if hasattr(self.response_module, 'detect_emotion'):
-                emotion, intensity = self.response_module.detect_emotion(command)
-                command_data['emotional_context'] = {
-                    'emotion': emotion,
-                    'intensity': intensity
-                }
-
             # Add conversation context
-            command_data['conversation_context'] = {
-                'recent_history': self.conversation_history[-5:],
-                'topics': self.response_module.context_memory['topics'][-3:] if hasattr(self.response_module,
-                                                                                        'context_memory') else []
+            command_data['conversation_history'] = {
+                'recent_history': self.assistant_history[-5:],
             }
-
-            # Cache the result
-            self.command_cache.set(command, recent_context, command_data)
 
             return command_data
 
@@ -451,13 +361,13 @@ Example for music:
                     "error": error_msg,
                     "context": command_context
                 }
-                self.conversation_history.append(("system", json.dumps(system_msg, indent=2)))
+                self.assistant_history.append(("system", error_msg))
                 return {"error": error_msg, "context": command_context}
 
             # Get the agent function
             func = getattr(agent, agent_command.function_name, None)
             if not func:
-                error_msg = f"Function '{agent_command.function_name}' not found"
+                error_msg = f"Function '{agent_command.function_name}' not found for agent {agent_command.agent_name}"
                 system_msg = {
                     "status": "error",
                     "agent": agent_command.agent_name,
@@ -466,9 +376,11 @@ Example for music:
                     "error": error_msg,
                     "context": command_context
                 }
-                self.conversation_history.append(("system", json.dumps(system_msg, indent=2)))
+                self.assistant_history.append(("system", error_msg))
                 return {"error": error_msg, "context": command_context}
-
+            #if agent_command.agent_name == "conversation":
+                #agent_command.parameters['assistant_history'] = self.assistant_history
+            #print(agent_command.parameters)
             # Execute function with context
             if asyncio.iscoroutinefunction(func):
                 result = await func(**agent_command.parameters)
@@ -484,7 +396,7 @@ Example for music:
                 "result": result,
                 "context": command_context
             }
-            self.conversation_history.append(("system", json.dumps(system_msg, indent=2)))
+            self.assistant_history.append(("system", result))
 
             return {"result": result, "context": command_context}
 
@@ -498,18 +410,18 @@ Example for music:
                 "error": error_msg,
                 "context": command_context
             }
-            self.conversation_history.append(("system", json.dumps(system_msg, indent=2)))
+            self.assistant_history.append(("system", error_msg))
             return {"error": error_msg, "context": command_context}
 
     def _get_recent_context(self, num_messages=5) -> str:
         """Get recent context in a compressed format"""
-        recent = self.conversation_history[-num_messages:]
-        return " | ".join(f"{role}:{content}" for role, content in recent)
+        recent = self.assistant_history[-10:]
+        return " | ".join(f"{message[0]}:{message[1]}" for message in recent)
 
     @lru_cache(maxsize=100)
     def _extract_context_from_history(self, missing_param: str, command_signature: str) -> str:
         """Extract context with caching and optimized prompt"""
-        recent_history = self.conversation_history[-5:]  # Reduced from 10 to 5
+        recent_history = self.assistant_history[-5:]  # Reduced from 10 to 5
 
         # Create a minimal context string
         history_text = "\n".join(f"{role}: {content}" for role, content in recent_history)
@@ -563,7 +475,7 @@ Example for music:
 
         # Include minimal context
         recent_context = " | ".join([
-            f"{content}" for _, content in self.conversation_history[-3:]
+            f"{content}" for _, content in self.assistant_history[-3:]
         ])
 
         return f"""Agents: {' | '.join(agent_descriptions)}
@@ -574,51 +486,6 @@ Return JSON:
 {{"agent_name": "X", "function_name": "Y", "parameters": {{...}}}}
 Or for chat: {{"agent_name": "conversation", "function_name": "chat", "parameters": {{"message": "Z"}}}}"""
 
-    async def _generate_contextual_response(self, original_command: str,
-                                      command_context: Dict[str, Any],
-                                      execution_result: Dict[str, Any]) -> str:
-        """Generate response with suggestion capability."""
-        try:
-            data = []
-            if "result" in execution_result:
-                data.append(("assistant", execution_result["result"]))
-                if hasattr(self.response_module, 'context_memory'):
-                    self.response_module.context_memory.update({
-                        'command_context': command_context
-                    })
-            else:
-                data.append(("system", execution_result["error"]))
-
-            should_suggest = await self._should_suggest_alternative(
-                original_command,
-                execution_result,
-                self.conversation_history[-5:]
-            )
-
-            if should_suggest:
-                suggestion = await self._generate_suggestion(
-                    original_command,
-                    execution_result,
-                    self.conversation_history[-5:]
-                )
-                if suggestion:
-                    self.pending_suggestion = suggestion
-                    data.append(("system", suggestion.suggestion_context))
-
-            response_text, speech_task = await self.response_module.process_response(
-                self.conversation_history,
-                data
-            )
-
-            self.conversation_history.append(("assistant", response_text))
-
-            if speech_task:
-                await speech_task
-
-            return response_text
-
-        except Exception as e:
-            return f"Error generating response: {str(e)}"
 
     def _initialize_agents(self):
         """Initialize agent instances"""
