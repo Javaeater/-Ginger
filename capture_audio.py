@@ -18,11 +18,11 @@ class VoiceListeningAssistant:
 
         # Initialize Whisper components
         self.recognizer = sr.Recognizer()
-        self.recognizer.energy_threshold = 25
-        self.recognizer.pause_threshold = 1.5
+        self.recognizer.energy_threshold = 300
+        self.recognizer.pause_threshold = 0.8
         self.recognizer.dynamic_energy_threshold = True
-        self.recognizer.non_speaking_duration = 1.5
-        self.recognizer.dynamic_energy_adjustment_ratio = 1.5
+        self.recognizer.non_speaking_duration = 0.5
+        self.recognizer.dynamic_energy_adjustment_ratio = 1.2
 
         self.client = OpenAI(api_key=openai_api_key)
 
